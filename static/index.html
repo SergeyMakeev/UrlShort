@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="{{LANG}}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>{{TITLE}}</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/code-entry.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <form method="post" action="/open">
+        <nav class="language-switch" aria-label="{{LANGUAGE_LABEL}}">
+          <a href="/?lang=ru" lang="ru" hreflang="ru" {{RU_CURRENT}}>RU</a>
+          <span aria-hidden="true">|</span>
+          <a href="/?lang=en" lang="en" hreflang="en" {{EN_CURRENT}}>EN</a>
+        </nav>
+        <h1>{{TITLE}}</h1>
+        <input type="hidden" name="lang" value="{{LANG_VALUE}}">
+        <input id="code" name="code" type="hidden" value="">
+        <fieldset>
+          <legend>{{PROMPT}}</legend>
+          <div class="code-entry">
+            <input name="digit1" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]" maxlength="1" aria-label="{{DIGIT}} 1" required autofocus data-code-digit>
+            <input name="digit2" type="text" inputmode="numeric" pattern="[0-9]" maxlength="1" aria-label="{{DIGIT}} 2" required data-code-digit>
+            <input name="digit3" type="text" inputmode="numeric" pattern="[0-9]" maxlength="1" aria-label="{{DIGIT}} 3" required data-code-digit>
+            <input name="digit4" type="text" inputmode="numeric" pattern="[0-9]" maxlength="1" aria-label="{{DIGIT}} 4" required data-code-digit>
+            <input name="digit5" type="text" inputmode="numeric" pattern="[0-9]" maxlength="1" aria-label="{{DIGIT}} 5" required data-code-digit>
+          </div>
+        </fieldset>
+        <p id="code-hint" class="hint">{{HINT}}</p>
+        {{MESSAGE}}
+        <button type="submit">{{BUTTON}}</button>
+      </form>
+    </main>
+  </body>
+</html>

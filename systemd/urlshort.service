@@ -1,0 +1,23 @@
+[Unit]
+Description=Five-digit URL link service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=urlshort
+Group=urlshort
+WorkingDirectory=/opt/urlshort
+ExecStart=/usr/bin/python3 /opt/urlshort/urlshort.py --data-dir /var/lib/urlshort serve --host 127.0.0.1 --port 8080 --trust-proxy
+Restart=on-failure
+RestartSec=3
+StateDirectory=urlshort
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/urlshort
+
+[Install]
+WantedBy=multi-user.target
