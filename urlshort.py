@@ -9,6 +9,7 @@ import json
 import os
 import random
 import re
+import secrets
 import sys
 import tempfile
 import threading
@@ -23,6 +24,7 @@ from urllib.parse import parse_qs, urlsplit
 
 CODE_RE = re.compile(r"^\d{5}$")
 MAX_FORM_BYTES = 1024
+MAX_ADMIN_FORM_BYTES = 16 * 1024
 DEFAULT_DATA_DIR = Path(os.environ.get("URLSHORT_DATA_DIR", "data"))
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 SUPPORTED_LANGUAGES = {"en", "ru"}
@@ -48,6 +50,62 @@ TRANSLATIONS = {
         "missing_code": "Введите 5-значный код.",
         "too_many": "Слишком много неверных попыток. Подождите минуту и попробуйте снова.",
         "incorrect": "Неверный код. Проверьте сообщение и попробуйте снова.",
+    },
+}
+ADMIN_TRANSLATIONS = {
+    "en": {
+        "title": "Manage links",
+        "create_title": "Create a link",
+        "url": "Destination URL",
+        "expires": "Expires in",
+        "days": "days",
+        "code": "Specific code",
+        "optional": "Optional — leave blank for a random code",
+        "create": "Create code",
+        "active_title": "Saved codes",
+        "status": "Status",
+        "active": "Active",
+        "expired": "Expired",
+        "delete": "Delete",
+        "copy": "Copy",
+        "copied": "Copied",
+        "cleanup": "Remove expired codes",
+        "empty": "No codes have been created yet.",
+        "back": "Open public page",
+        "language_label": "Language",
+        "csrf_error": "This form has expired. Reload the page and try again.",
+        "invalid_form": "Please provide a valid URL, lifetime, and optional 5-digit code.",
+        "created": "Code {code} was created.",
+        "deleted": "Code {code} was deleted.",
+        "not_found": "That code was not found.",
+        "cleaned": "Removed {count} expired code(s).",
+    },
+    "ru": {
+        "title": "Управление ссылками",
+        "create_title": "Создать ссылку",
+        "url": "Адрес ссылки",
+        "expires": "Срок действия",
+        "days": "дней",
+        "code": "Задать код",
+        "optional": "Необязательно — оставьте пустым для случайного кода",
+        "create": "Создать код",
+        "active_title": "Сохранённые коды",
+        "status": "Статус",
+        "active": "Активен",
+        "expired": "Истёк",
+        "delete": "Удалить",
+        "copy": "Копировать",
+        "copied": "Скопировано",
+        "cleanup": "Удалить просроченные",
+        "empty": "Коды ещё не созданы.",
+        "back": "Открыть общую страницу",
+        "language_label": "Язык",
+        "csrf_error": "Форма устарела. Обновите страницу и попробуйте снова.",
+        "invalid_form": "Укажите корректную ссылку, срок и необязательный 5-значный код.",
+        "created": "Код {code} создан.",
+        "deleted": "Код {code} удалён.",
+        "not_found": "Код не найден.",
+        "cleaned": "Удалено просроченных кодов: {count}.",
     },
 }
 
@@ -249,6 +307,9 @@ class UrlShortServer(ThreadingHTTPServer):
         page_template: str,
         stylesheet: bytes,
         entry_script: bytes,
+        admin_template: str,
+        admin_stylesheet: bytes,
+        admin_script: bytes,
         trust_proxy: bool = False,
     ):
         super().__init__(address, UrlShortHandler)
@@ -256,6 +317,10 @@ class UrlShortServer(ThreadingHTTPServer):
         self.page_template = page_template
         self.stylesheet = stylesheet
         self.entry_script = entry_script
+        self.admin_template = admin_template
+        self.admin_stylesheet = admin_stylesheet
+        self.admin_script = admin_script
+        self.csrf_token = secrets.token_urlsafe(32)
         self.trust_proxy = trust_proxy
         self.limiter = FailureLimiter()
 
@@ -318,6 +383,107 @@ class UrlShortHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _admin_language(self, explicit: str | None = None) -> str:
+        return choose_language(explicit, self.headers.get("Accept-Language", ""))
+
+    def _send_admin_page(
+        self,
+        language: str,
+        message: str = "",
+        status: HTTPStatus = HTTPStatus.OK,
+    ) -> None:
+        translations = ADMIN_TRANSLATIONS[language]
+        rows = []
+        for link in self.server.store.all(include_expired=True):
+            state_key = "expired" if link.expired else "active"
+            state_class = "expired" if link.expired else "active"
+            rows.append(
+                f"""
+                <tr>
+                  <td><strong>{html.escape(link.code)}</strong></td>
+                  <td class="destination"><a href="{html.escape(link.url, quote=True)}"
+                    target="_blank" rel="noopener noreferrer">{html.escape(link.url)}</a></td>
+                  <td>{html.escape(format_timestamp(link.expires_at))}</td>
+                  <td><span class="status {state_class}">{html.escape(translations[state_key])}</span></td>
+                  <td class="actions">
+                    <button class="copy-button secondary" type="button"
+                      data-copy="{html.escape(link.code, quote=True)}"
+                      data-copied="{html.escape(translations['copied'], quote=True)}">
+                      {html.escape(translations['copy'])}
+                    </button>
+                    <form method="post" action="/admin/delete">
+                      <input type="hidden" name="csrf" value="{html.escape(self.server.csrf_token, quote=True)}">
+                      <input type="hidden" name="lang" value="{language}">
+                      <input type="hidden" name="code" value="{html.escape(link.code, quote=True)}">
+                      <button class="danger" type="submit">{html.escape(translations['delete'])}</button>
+                    </form>
+                  </td>
+                </tr>"""
+            )
+        rows_html = "".join(rows)
+        empty_html = (
+            "" if rows else f'<p class="empty">{html.escape(translations["empty"])}</p>'
+        )
+        message_html = (
+            f'<p class="admin-message" role="status">{html.escape(message)}</p>'
+            if message
+            else ""
+        )
+        replacements = {
+            "{{LANG}}": language,
+            "{{TITLE}}": html.escape(translations["title"]),
+            "{{CREATE_TITLE}}": html.escape(translations["create_title"]),
+            "{{URL_LABEL}}": html.escape(translations["url"]),
+            "{{EXPIRES_LABEL}}": html.escape(translations["expires"]),
+            "{{DAYS}}": html.escape(translations["days"]),
+            "{{CODE_LABEL}}": html.escape(translations["code"]),
+            "{{OPTIONAL}}": html.escape(translations["optional"]),
+            "{{CREATE}}": html.escape(translations["create"]),
+            "{{ACTIVE_TITLE}}": html.escape(translations["active_title"]),
+            "{{STATUS_LABEL}}": html.escape(translations["status"]),
+            "{{CLEANUP}}": html.escape(translations["cleanup"]),
+            "{{BACK}}": html.escape(translations["back"]),
+            "{{LANGUAGE_LABEL}}": html.escape(translations["language_label"]),
+            "{{CSRF}}": html.escape(self.server.csrf_token, quote=True),
+            "{{LANG_VALUE}}": language,
+            "{{RU_CURRENT}}": 'class="active" aria-current="page"'
+            if language == "ru"
+            else "",
+            "{{EN_CURRENT}}": 'class="active" aria-current="page"'
+            if language == "en"
+            else "",
+            "{{ROWS}}": rows_html,
+            "{{EMPTY}}": empty_html,
+            "{{MESSAGE}}": message_html,
+        }
+        rendered = self.server.admin_template
+        for placeholder, value in replacements.items():
+            rendered = rendered.replace(placeholder, value)
+        body = rendered.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _redirect_admin(self, language: str, query: str = "") -> None:
+        separator = "&" if query else ""
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", f"/admin?{query}{separator}lang={language}")
+        self._security_headers(include_content_policy=False)
+        self.end_headers()
+
+    def _admin_message(self, language: str, query: dict[str, list[str]]) -> str:
+        translations = ADMIN_TRANSLATIONS[language]
+        if "created" in query:
+            return translations["created"].format(code=query["created"][0])
+        if "deleted" in query:
+            return translations["deleted"].format(code=query["deleted"][0])
+        if "cleaned" in query:
+            return translations["cleaned"].format(count=query["cleaned"][0])
+        return ""
+
     def do_GET(self) -> None:
         parsed_path = urlsplit(self.path)
         path = parsed_path.path
@@ -325,6 +491,10 @@ class UrlShortHandler(BaseHTTPRequestHandler):
             requested = parse_qs(parsed_path.query).get("lang", [None])[0]
             language = choose_language(requested, self.headers.get("Accept-Language", ""))
             self._send_page(language)
+        elif path in {"/admin", "/admin/"}:
+            query = parse_qs(parsed_path.query)
+            language = self._admin_language(query.get("lang", [None])[0])
+            self._send_admin_page(language, self._admin_message(language, query))
         elif path == "/style.css":
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/css; charset=utf-8")
@@ -339,6 +509,20 @@ class UrlShortHandler(BaseHTTPRequestHandler):
             self._security_headers()
             self.end_headers()
             self.wfile.write(self.server.entry_script)
+        elif path == "/admin.css":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/css; charset=utf-8")
+            self.send_header("Content-Length", str(len(self.server.admin_stylesheet)))
+            self._security_headers()
+            self.end_headers()
+            self.wfile.write(self.server.admin_stylesheet)
+        elif path == "/admin.js":
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/javascript; charset=utf-8")
+            self.send_header("Content-Length", str(len(self.server.admin_script)))
+            self._security_headers()
+            self.end_headers()
+            self.wfile.write(self.server.admin_script)
         elif path == "/healthz":
             body = b"ok\n"
             self.send_response(HTTPStatus.OK)
@@ -351,7 +535,11 @@ class UrlShortHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        if self.path.split("?", 1)[0] != "/open":
+        path = urlsplit(self.path).path
+        if path.startswith("/admin/"):
+            self._handle_admin_post(path)
+            return
+        if path != "/open":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
@@ -391,17 +579,79 @@ class UrlShortHandler(BaseHTTPRequestHandler):
         self._security_headers(include_content_policy=False)
         self.end_headers()
 
+    def _handle_admin_post(self, path: str) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        language = self._admin_language()
+        if length <= 0 or length > MAX_ADMIN_FORM_BYTES:
+            self._send_admin_page(
+                language, ADMIN_TRANSLATIONS[language]["invalid_form"], HTTPStatus.BAD_REQUEST
+            )
+            return
+
+        fields = parse_qs(
+            self.rfile.read(length).decode("utf-8", errors="replace"),
+            keep_blank_values=True,
+        )
+        language = self._admin_language(fields.get("lang", [None])[0])
+        supplied_token = fields.get("csrf", [""])[0]
+        if not secrets.compare_digest(supplied_token, self.server.csrf_token):
+            self._send_admin_page(
+                language, ADMIN_TRANSLATIONS[language]["csrf_error"], HTTPStatus.FORBIDDEN
+            )
+            return
+
+        translations = ADMIN_TRANSLATIONS[language]
+        try:
+            if path == "/admin/create":
+                days = int(fields.get("days", [""])[0])
+                if days not in {1, 7, 30, 90}:
+                    raise ValueError("invalid lifetime")
+                code = fields.get("code", [""])[0].strip() or None
+                link = self.server.store.create(
+                    fields.get("url", [""])[0],
+                    utc_now() + timedelta(days=days),
+                    code=code,
+                )
+                self._redirect_admin(language, f"created={link.code}")
+                return
+            if path == "/admin/delete":
+                code = fields.get("code", [""])[0].strip()
+                if self.server.store.remove(code):
+                    self._redirect_admin(language, f"deleted={code}")
+                else:
+                    self._send_admin_page(
+                        language, translations["not_found"], HTTPStatus.NOT_FOUND
+                    )
+                return
+            if path == "/admin/cleanup":
+                count = self.server.store.cleanup()
+                self._redirect_admin(language, f"cleaned={count}")
+                return
+        except (ValueError, FileExistsError, OSError):
+            self._send_admin_page(
+                language, translations["invalid_form"], HTTPStatus.BAD_REQUEST
+            )
+            return
+
+        self.send_error(HTTPStatus.NOT_FOUND)
+
     def log_message(self, format: str, *args: object) -> None:
         sys.stderr.write(
             f'{self.log_date_time_string()} {self.client_address[0]} {format % args}\n'
         )
 
 
-def load_assets() -> tuple[str, bytes, bytes]:
+def load_assets() -> tuple[str, bytes, bytes, str, bytes, bytes]:
     return (
         (STATIC_DIR / "index.html").read_text(encoding="utf-8"),
         (STATIC_DIR / "style.css").read_bytes(),
         (STATIC_DIR / "code-entry.js").read_bytes(),
+        (STATIC_DIR / "admin.html").read_text(encoding="utf-8"),
+        (STATIC_DIR / "admin.css").read_bytes(),
+        (STATIC_DIR / "admin.js").read_bytes(),
     )
 
 
@@ -444,13 +694,23 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "serve":
-            page_template, stylesheet, entry_script = load_assets()
+            (
+                page_template,
+                stylesheet,
+                entry_script,
+                admin_template,
+                admin_stylesheet,
+                admin_script,
+            ) = load_assets()
             server = UrlShortServer(
                 (args.host, args.port),
                 store,
                 page_template,
                 stylesheet,
                 entry_script,
+                admin_template,
+                admin_stylesheet,
+                admin_script,
                 trust_proxy=args.trust_proxy,
             )
             print(f"Listening on http://{args.host}:{args.port}", flush=True)

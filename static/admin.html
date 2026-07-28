@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="{{LANG}}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>{{TITLE}}</title>
+    <link rel="stylesheet" href="/admin.css">
+    <script src="/admin.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="back-link" href="/?lang={{LANG_VALUE}}">← {{BACK}}</a>
+      <nav class="language-switch" aria-label="{{LANGUAGE_LABEL}}">
+        <a href="/admin?lang=ru" lang="ru" hreflang="ru" {{RU_CURRENT}}>RU</a>
+        <span aria-hidden="true">|</span>
+        <a href="/admin?lang=en" lang="en" hreflang="en" {{EN_CURRENT}}>EN</a>
+      </nav>
+    </header>
+
+    <main>
+      <h1>{{TITLE}}</h1>
+      {{MESSAGE}}
+
+      <section class="create-panel">
+        <h2>{{CREATE_TITLE}}</h2>
+        <form method="post" action="/admin/create">
+          <input type="hidden" name="csrf" value="{{CSRF}}">
+          <input type="hidden" name="lang" value="{{LANG_VALUE}}">
+
+          <label for="url">{{URL_LABEL}}</label>
+          <input id="url" name="url" type="url" placeholder="https://example.com/..." required>
+
+          <div class="form-row">
+            <div>
+              <label for="days">{{EXPIRES_LABEL}}</label>
+              <select id="days" name="days">
+                <option value="1">1 {{DAYS}}</option>
+                <option value="7" selected>7 {{DAYS}}</option>
+                <option value="30">30 {{DAYS}}</option>
+                <option value="90">90 {{DAYS}}</option>
+              </select>
+            </div>
+            <div>
+              <label for="custom-code">{{CODE_LABEL}}</label>
+              <input id="custom-code" name="code" type="text" inputmode="numeric"
+                pattern="[0-9]{5}" maxlength="5" aria-describedby="code-note">
+              <small id="code-note">{{OPTIONAL}}</small>
+            </div>
+          </div>
+
+          <button class="primary" type="submit">{{CREATE}}</button>
+        </form>
+      </section>
+
+      <section class="codes-panel">
+        <div class="section-heading">
+          <h2>{{ACTIVE_TITLE}}</h2>
+          <form method="post" action="/admin/cleanup">
+            <input type="hidden" name="csrf" value="{{CSRF}}">
+            <input type="hidden" name="lang" value="{{LANG_VALUE}}">
+            <button class="secondary" type="submit">{{CLEANUP}}</button>
+          </form>
+        </div>
+        {{EMPTY}}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>{{CODE_LABEL}}</th>
+                <th>{{URL_LABEL}}</th>
+                <th>{{EXPIRES_LABEL}}</th>
+                <th>{{STATUS_LABEL}}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>{{ROWS}}</tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

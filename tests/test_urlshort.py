@@ -83,15 +83,29 @@ class LanguageTests(unittest.TestCase):
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        store = urlshort.LinkStore(Path(self.temporary.name))
-        store.create(
+        self.store = urlshort.LinkStore(Path(self.temporary.name))
+        self.store.create(
             "https://example.com/destination",
             urlshort.utc_now() + timedelta(days=1),
             code="12345",
         )
-        template, stylesheet, entry_script = urlshort.load_assets()
+        (
+            template,
+            stylesheet,
+            entry_script,
+            admin_template,
+            admin_stylesheet,
+            admin_script,
+        ) = urlshort.load_assets()
         self.server = urlshort.UrlShortServer(
-            ("127.0.0.1", 0), store, template, stylesheet, entry_script
+            ("127.0.0.1", 0),
+            self.store,
+            template,
+            stylesheet,
+            entry_script,
+            admin_template,
+            admin_stylesheet,
+            admin_script,
         )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -111,6 +125,23 @@ class HttpTests(unittest.TestCase):
         response_body = response.read()
         connection.close()
         return response, response_body
+
+    def admin_post(self, path, fields):
+        fields = {
+            "csrf": self.server.csrf_token,
+            "lang": "en",
+            **fields,
+        }
+        body = urlencode(fields)
+        return self.request(
+            "POST",
+            path,
+            body=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Content-Length": str(len(body)),
+            },
+        )
 
     def test_home_page(self):
         response, body = self.request("GET", "/")
@@ -211,6 +242,67 @@ class HttpTests(unittest.TestCase):
         response, body = self.request("GET", "/healthz")
         self.assertEqual(response.status, 200)
         self.assertEqual(body, b"ok\n")
+
+    def test_admin_page_lists_codes(self):
+        response, body = self.request("GET", "/admin?lang=en")
+        self.assertEqual(response.status, 200)
+        self.assertIn(b"Manage links", body)
+        self.assertIn(b"12345", body)
+        self.assertIn(b"https://example.com/destination", body)
+        self.assertIn(self.server.csrf_token.encode(), body)
+
+    def test_admin_page_is_translated(self):
+        response, body = self.request("GET", "/admin?lang=ru")
+        self.assertEqual(response.status, 200)
+        self.assertIn("Управление ссылками".encode(), body)
+        self.assertIn(b'<html lang="ru">', body)
+
+    def test_admin_can_create_code(self):
+        response, _ = self.admin_post(
+            "/admin/create",
+            {
+                "url": "https://created.example/path",
+                "days": "30",
+                "code": "54321",
+            },
+        )
+        self.assertEqual(response.status, 303)
+        self.assertEqual(response.getheader("Location"), "/admin?created=54321&lang=en")
+        self.assertEqual(self.store.get("54321").url, "https://created.example/path")
+
+    def test_admin_can_delete_code(self):
+        response, _ = self.admin_post("/admin/delete", {"code": "12345"})
+        self.assertEqual(response.status, 303)
+        self.assertIsNone(self.store.get("12345", include_expired=True))
+
+    def test_admin_rejects_missing_csrf_token(self):
+        body = urlencode(
+            {
+                "url": "https://blocked.example",
+                "days": "7",
+                "code": "33333",
+                "lang": "en",
+            }
+        )
+        response, _ = self.request(
+            "POST",
+            "/admin/create",
+            body=body,
+            headers={"Content-Length": str(len(body))},
+        )
+        self.assertEqual(response.status, 403)
+        self.assertIsNone(self.store.get("33333", include_expired=True))
+
+    def test_admin_cleanup_removes_expired_codes(self):
+        (Path(self.temporary.name) / "22222.json").write_text(
+            '{"url":"https://expired.example","created_at":"2020-01-01T00:00:00Z",'
+            '"expires_at":"2020-01-02T00:00:00Z"}',
+            encoding="utf-8",
+        )
+        response, _ = self.admin_post("/admin/cleanup", {})
+        self.assertEqual(response.status, 303)
+        self.assertEqual(response.getheader("Location"), "/admin?cleaned=1&lang=en")
+        self.assertIsNone(self.store.get("22222", include_expired=True))
 
 
 if __name__ == "__main__":
