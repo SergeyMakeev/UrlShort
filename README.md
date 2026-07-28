@@ -92,8 +92,7 @@ sudo-enabled user, prefix administrative commands with `sudo`.
 ```bash
 apt update
 apt full-upgrade -y
-apt install -y git python3 ca-certificates curl gnupg \
-  debian-keyring debian-archive-keyring apt-transport-https nano
+apt install -y git python3 ca-certificates curl gnupg debian-keyring debian-archive-keyring apt-transport-https nano
 ```
 
 If Debian reports that a reboot is required, reboot and reconnect:
@@ -107,8 +106,7 @@ reboot
 Create the dedicated service account first:
 
 ```bash
-useradd --system --home-dir /var/lib/urlshort \
-  --shell /usr/sbin/nologin urlshort
+useradd --system --home-dir /var/lib/urlshort --shell /usr/sbin/nologin urlshort
 ```
 
 Download the application into its permanent location:
@@ -125,8 +123,7 @@ environment or `pip install` step.
 Install the included systemd unit:
 
 ```bash
-install -m 0644 /opt/urlshort/systemd/urlshort.service \
-  /etc/systemd/system/urlshort.service
+install -m 0644 /opt/urlshort/systemd/urlshort.service /etc/systemd/system/urlshort.service
 systemctl daemon-reload
 systemctl enable --now urlshort
 ```
@@ -215,10 +212,8 @@ closing the first one.
 Install Caddy from its official stable Debian repository:
 
 ```bash
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-  | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-  | tee /etc/apt/sources.list.d/caddy-stable.list
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 chmod o+r /etc/apt/sources.list.d/caddy-stable.list
 apt update
